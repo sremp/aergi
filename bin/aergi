@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+""" Tempo timesheet manipulation """
+
+from argparse import ArgumentParser
+import calendar
+from datetime import datetime, timedelta
+from getpass import getpass
+import json
+import os
+from pprint import pprint # pylint: disable=unused-import
+import re
+import subprocess
+import sys
+import yaml
+from prettytable import PrettyTable
+from jira.tempo_data import TempoData
+from jira.jira import JiraClient
+from utils import sde
+
+
+def parse_args():
+    """ Parse command line args """
+    parser = ArgumentParser()
+    parser.add_argument('--debug', action='store_true', help='Debug mode')
+    subparsers = parser.add_subparsers(dest='command')
+    subparsers.required = True
+    parser_edit = subparsers.add_parser('edit', aliases=['vi'], help='Edit input file')
+    parser_create = subparsers.add_parser('create', help='Create input file')
+    parser_create.add_argument('--delta-weeks', '-d', type=int, default=0, help='Number of weeks delta (- for previous)')
+    parser_cfg = subparsers.add_parser('config', help='Config')
+    parser_cfg.add_argument('--input', '-i', help='Input file')
+    parser_log = subparsers.add_parser('log', help='Log time')
+    parser_log.add_argument('--worker', '-w', default=None, help='Worker, defaults to current user')
+    parser_log.add_argument('--input-file', '-i', help='Input file')
+    parser_log.add_argument('--test', '-t', action='store_true', help='Test mode')
+    #parser_log.add_argument('--test-jira', action='store_true', help='Use test Jira')
+    parser_log = subparsers.add_parser('get', help='Get logged time')
+    parser_log.add_argument('--worker', '-w', default=None, help='Worker, defaults to current user')
+    parser_log.add_argument('--date-from', '--from', '-f', required=True, help='Date from (YYYY-mm-dd)')
+    parser_log.add_argument('--date-to', '--to', '-t', required=True, help='Date from (YYYY-mm-dd)')
+    return parser.parse_args()
+
+
+def main():
+    """ Main routine """
+    if 'AERGI_HOME' not in os.environ:
+        print('ERROR: Please make sure AERGI_HOME env var is set')
+        sys.exit(1)
+    args = parse_args()
+    sde.init_logging()
+    try:
+        jira = JiraClient(debug=args.debug)
+        if args.command == 'config':
+            config_set(input=args.input)
+        elif args.command == 'create':
+            create(args.delta_weeks)
+        elif args.command in ['edit', 'vi']:
+            edit_input()
+        elif args.command == 'log':
+            if args.input_file is not None:
+                input_file = args.input_file
+            else:
+                cfg = config_get()
+                input_file = cfg.get('input')
+            if input_file is None:
+                raise RuntimeError('Input file not specified and not configured')
+            worker = args.worker or os.getenv('AERGI_WORKER') or os.environ['LOGNAME']
+            worker_key = jira.get_user(worker)['key']
+            print(f'Worker: {worker}, key: {worker_key}')
+            if not args.test:
+                print('Validation:')
+                log_time(worker_key, input_file, test=True, debug=args.debug)
+            print('---')
+            log_time(worker_key, input_file, test=args.test, debug=args.debug)
+        elif args.command == 'get':
+            worker = args.worker or os.getenv('AERGI_WORKER') or os.environ['LOGNAME']
+            worker_key = jira.get_user(worker)['key']
+            print(f'Worker: {worker}, key: {worker_key}')
+            get_time(worker_key, args.date_from, args.date_to, debug=args.debug)
+        else:
+            raise RuntimeError(f'Unimplemented: {args.command}')
+    except: # pylint: disable=bare-except
+        sde.handle_error()
+
+
+def log_time(worker, input_file, test=False, test_jira=False, debug=False):
+    """ Log time from input file """
+    file_data = TempoData()
+    file_data.from_file(input_file)
+    date_from, date_to = file_data.get_from_to_dates()
+
+    jira_data = TempoData()
+    jira = JiraClient(test=test_jira, debug=debug)
+    jira_data.from_jira(jira, worker, date_from, date_to)
+
+    diff = file_data.diff(jira_data)
+
+    changes = 0
+    for date in diff:
+        for log in diff[date]['-']:
+            print(f'- {date} {log}')
+            jira.tempo_delete(log['id'], test=test)
+            changes += 1
+        for log in diff[date]['+']:
+            print(f'+ {date} {log}')
+            jira.tempo_log(worker, date, log, test=test)
+            changes += 1
+
+    if not test and changes == 0:
+        print('No changes')
+
+
+def get_time(worker, date_from, date_to, test_jira=False, debug=False):
+    """ Get logged time for a worker """
+    jira = JiraClient(test=test_jira, debug=debug)
+    jira_data = TempoData()
+    jira_data.from_jira(jira, worker, date_from, date_to)
+
+    tab = PrettyTable()
+    tab.field_names = ['Date', 'Issue', 'Activity', 'Hours', 'Summary', 'Comment']
+    for col in ['Date', 'Issue', 'Activity', 'Summary', 'Comment']:
+        tab.align[col] = 'l'
+    for col in ['Hours']:
+        tab.align[col] = 'r'
+
+    for day, logs in sorted(jira_data.entries.items()):
+        day_total = 0
+        for log in logs:
+            tab.add_row([day, log['issue'], log['activity'], log['hours'], log['issue_summary'], log['comment']])
+            day_total += log['hours']
+        tab.add_row(['---', '---', '---', day_total, '---', '---'])
+    print(tab)
+
+
+def config_set(input=None):
+    """ Configure based on args """
+    cfg_file = '.tt.yml'
+    cfg = config_get()
+    if input is not None:
+        cfg['input'] = input
+    with open(cfg_file, 'w') as outf:
+        yaml.dump(cfg, outf)
+
+
+def config_get():
+    """ Get configuration """
+    cfg_file = '.tt.yml'
+    if os.path.isfile(cfg_file):
+        with open(cfg_file) as inf:
+            cfg = yaml.safe_load(inf)
+    else:
+        cfg = {}
+    return cfg
+
+
+def edit_input():
+    """ Edit input file """
+    cfg = config_get()
+    if 'input' not in cfg:
+        raise RuntimeError('Input file not configured')
+    cmd = os.environ.get('EDITOR', 'vi') + ' ' + cfg['input']
+    subprocess.call(cmd, shell=True)
+
+
+def create(delta_weeks):
+    """ Create input file """
+    # datetime_str = '02/28/23 02:00:26'
+    # now = datetime.strptime(datetime_str, '%m/%d/%y %H:%M:%S')
+    now = datetime.now() + timedelta(days=delta_weeks * 7)
+    weekday = now.weekday()
+    if weekday == 5:
+        first = now
+    elif weekday == 6:
+        first = now - timedelta(days=1)
+    else:
+        first = now - timedelta(days=now.weekday() + 2)
+
+    file = (first + timedelta(days=6)).strftime('%Y-%m-%d') + '.yaml'
+    print(f'Writing: {file}')
+
+    if os.path.isfile(file):
+        raise RuntimeError(f'File already exists: {file}')
+
+    with open(file, 'w') as outf:
+        for num in range(7):
+            date = first + timedelta(days=num)
+            date_str = date.strftime("%Y-%m-%d")
+            dow = calendar.day_name[date.weekday()]
+            outf.write(f'# {dow}\n{date_str}:\n-\n\n')
+
+    config_set(input=file)
+
+
+main()

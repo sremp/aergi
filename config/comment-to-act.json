@@ -1,0 +1,7 @@
+{
+  "same": ["example", "dev", "test", "design"],
+  "map": [
+    ["(status|review|weekly)", "plan"],
+    ["meeting", "non-proj"]
+  ]
+}

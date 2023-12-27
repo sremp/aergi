@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+""" Jira Search """
+
+from argparse import ArgumentParser
+import os
+import sys
+from getpass import getpass
+from prettytable import PrettyTable
+from jira.jira import JiraClient
+
+
+def parse_args():
+    """ Parse command-line arguments """
+    parser = ArgumentParser()
+    parser.add_argument('--jql', '-j', help='Specify full JQL')
+    parser.add_argument('--project', '-p', help='Specify project')
+    group= parser.add_argument_group('Issue type')
+    group_ex = group.add_mutually_exclusive_group()
+    group_ex.add_argument('--epic', '-e', action='store_true', help='Issue Type: Epic')
+    group_ex.add_argument('--story', '-y', action='store_true', help='Issue Type: Story')
+    group_ex.add_argument('--task', '-t', action='store_true', help='Issue Type: Task')
+    group_ex.add_argument('--bug', '-b', action='store_true', help='Issue Type: Bug')
+    parser.add_argument('--summary', '-s', help='Summary text to search for')
+    args = parser.parse_args()
+    if args.jql is None and args.summary is None:
+        parser.print_help()
+        print('ERROR: Either --summary/-s or --jql/-j must be specified')
+        sys.exit(1)
+    return args
+
+
+def main():
+    """ Main routine """
+    args = parse_args()
+    from pprint import pprint
+    jira = JiraClient()
+
+    if args.jql is None:
+        project = args.project or os.getenv('AERGI_PROJECT') or 'plateng'
+        jql = f'project={project} and summary ~ "{args.summary}"'
+        if args.epic:
+            jql += ' and issuetype=Epic'
+        elif args.story:
+            jql += ' and issuetype=Story'
+        elif args.task:
+            jql += ' and issuetype=Task'
+        elif args.bug:
+            jql += ' and issuetype=Bug'
+        jql += ' order by created'
+    else:
+        jql = args.jql
+
+    print('JQL:', jql)
+    out = jira.search(jql)
+
+    tab = PrettyTable()
+    tab.field_names = ['Key', 'Type', 'Status', 'Reporter', 'Assignee', 'Summary']
+    for col in tab.field_names:
+        tab.align[col] = 'l'
+    for item in out:
+        assignee = item['fields']['assignee']['name'] if item['fields']['assignee'] else 'unassigned'
+        reporter = item['fields']['reporter']['name']
+        issuetype = item['fields']['issuetype']['name'] # if item['fields']['assignee'] else 'unassigned'
+        status = item['fields']['status']['name']
+        resolution = item['fields']['resolution']['name'] if item['fields']['resolution'] else None
+        station = f'{status}/{resolution}' if resolution is not None else status
+        tab.add_row([item['key'], issuetype, station, reporter, assignee, item['fields']['summary']])
+    print(tab)
+
+
+main()

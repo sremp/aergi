@@ -1,0 +1,8 @@
+{
+  "example": "Activity Name in JIRA",
+  "design": "Design",
+  "dev": "Development",
+  "test": "Testing",
+  "plan": "Planning",
+  "non-proj": "Non-Project time"
+}

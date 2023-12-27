@@ -1,0 +1,13 @@
+{
+  "pto":           { "issue": "TEMPO-1",       "activity": "pto" },
+  "holiday":       { "issue": "TEMPO-2",       "activity": "holiday" },
+  "sick":          { "issue": "TEMPO-3",       "activity": "sick" },
+  "management":    { "issue": "TEMPO-4",       "activity": "manage" },
+  "team":          { "issue": "TEMPO-5",       "activity": "non-proj" },
+  "daily":         { "issue": "TEMPO-5",       "activity": "non-proj" },
+  "interview":     { "issue": "TEMPO-5",       "activity": "non-proj" },
+  "non-proj":      { "issue": "TEMPO-5",       "activity": "non-proj" },
+
+  "support":       { "issue": "SUPPORT-1",     "activity": "support", "note": "general support" },
+  "secret-dev":    { "issue": "SECRET-1",      "activity": "dev" }
+}

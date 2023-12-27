@@ -1,0 +1,7 @@
+{
+  "foo":     { "issue": "FOO-1", "summary": "hello" },
+  "bar":     { "issue": "FOO-2", "summary": "world" },
+  "foobar":  { "issue": "FOO-3", "summary": "hello world" },
+  "demo":    { "issue": "BAR-1", "summary": "demo" },
+  "meeting": { "issue": "BAR-2", "summary": "i hate meetings" }
+}
